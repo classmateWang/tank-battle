@@ -281,13 +281,16 @@ class Tank {
     this.y = y;
     this.dir = dir;
     this.size = TANK_SIZE;
-    this.speed = isPlayer ? 2.4 : 1.1;
+    this.speed = isPlayer ? 1.6 : 1.0;
     this.hp = isPlayer ? 100 : 50;
     this.maxHp = this.hp;
     this.isPlayer = isPlayer;
     this.cooldown = 0;
-    this.maxCooldown = isPlayer ? 20 : 80;
+    this.maxCooldown = isPlayer ? 28 : 80;
     this.alive = true;
+    this.canFire = true; // for trigger-style firing
+    this.stuckCount = 0;
+    this.aiChangeTimer = 0;
   }
 
   get cx() { return this.x + this.size / 2; }
@@ -612,8 +615,18 @@ function updateAI(enemy) {
   const dy = player.cy - enemy.cy;
   const dist = Math.hypot(dx, dy);
 
+  enemy.aiChangeTimer++;
+  enemy.cooldown = Math.max(0, enemy.cooldown - 1);
+
+  // Decide which direction to go
   let desiredDir = enemy.dir;
-  if (dist > 120) {
+
+  if (enemy.stuckCount > 8) {
+    // Been stuck too long, pick a random new direction
+    desiredDir = Math.floor(Math.random() * 4);
+    enemy.stuckCount = 0;
+  } else if (dist > 120) {
+    // Move toward player along the dominant axis
     if (Math.abs(dx) > Math.abs(dy)) {
       desiredDir = dx > 0 ? DIR.RIGHT : DIR.LEFT;
     } else {
@@ -621,8 +634,17 @@ function updateAI(enemy) {
     }
   }
 
+  // Every so often, randomize direction slightly to avoid patterns
+  if (enemy.aiChangeTimer > 60 + Math.floor(Math.random() * 60)) {
+    if (Math.random() < 0.3) {
+      desiredDir = Math.floor(Math.random() * 4);
+    }
+    enemy.aiChangeTimer = 0;
+  }
+
+  // Try directions in priority order
+  const tryDir = [desiredDir, (desiredDir + 1) % 4, (desiredDir + 3) % 4, enemy.dir, (desiredDir + 2) % 4];
   let moved = false;
-  const tryDir = [desiredDir, enemy.dir, (desiredDir + 1) % 4, (desiredDir + 3) % 4, (desiredDir + 2) % 4];
 
   for (const d of tryDir) {
     const nx = enemy.x + DIR.dx[d] * enemy.speed;
@@ -636,20 +658,21 @@ function updateAI(enemy) {
     }
   }
 
-  if (!moved) {
-    enemy.dir = (enemy.dir + 1) % 4;
+  if (moved) {
+    enemy.stuckCount = Math.max(0, enemy.stuckCount - 1);
+  } else {
+    enemy.stuckCount++;
   }
 
-  enemy.cooldown = Math.max(0, enemy.cooldown - 1);
-  // Only shoot when roughly aligned AND within range
-  if (enemy.cooldown === 0 && dist < 450) {
+  // Shoot: only when aligned, within range, and not firing too often
+  if (enemy.cooldown === 0 && dist < 400) {
     const aligned = (
-      (enemy.dir === DIR.UP && dy < 0 && Math.abs(dx) < TANK_SIZE + 8) ||
-      (enemy.dir === DIR.DOWN && dy > 0 && Math.abs(dx) < TANK_SIZE + 8) ||
-      (enemy.dir === DIR.LEFT && dx < 0 && Math.abs(dy) < TANK_SIZE + 8) ||
-      (enemy.dir === DIR.RIGHT && dx > 0 && Math.abs(dy) < TANK_SIZE + 8)
+      (enemy.dir === DIR.UP && dy < 0 && Math.abs(dx) < TANK_SIZE + 12) ||
+      (enemy.dir === DIR.DOWN && dy > 0 && Math.abs(dx) < TANK_SIZE + 12) ||
+      (enemy.dir === DIR.LEFT && dx < 0 && Math.abs(dy) < TANK_SIZE + 12) ||
+      (enemy.dir === DIR.RIGHT && dx > 0 && Math.abs(dy) < TANK_SIZE + 12)
     );
-    if (aligned && Math.random() < 0.5) {
+    if (aligned && Math.random() < 0.35) {
       fireBullet(enemy);
     }
   }
@@ -714,7 +737,12 @@ function updatePlayer() {
   }
 
   if (game.keys[' '] || game.keys['j']) {
-    fireBullet(player);
+    if (player.canFire) {
+      fireBullet(player);
+      player.canFire = false;
+    }
+  } else {
+    player.canFire = true;
   }
 }
 
